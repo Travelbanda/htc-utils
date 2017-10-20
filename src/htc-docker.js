@@ -92,9 +92,7 @@ const sha1 = (...args) => {
 }
 
 const releasefront = () => {
-  const {
-    register_url
-  } = argv
+  const { register_url } = argv
   const version = getVersionFromPackageJSON()
 
   const dockerFile = readFile('Dockerfile')
