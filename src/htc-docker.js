@@ -4,7 +4,6 @@ const path = require('path')
 
 const sh = require('shelljs')
 const lockfile = require('@yarnpkg/lockfile')
-const tmp = require('tmp')
 
 const { argv } = require('yargs')
   .command('release <register_url>', 'build docker and push to register')
@@ -127,7 +126,7 @@ const releasefront = () => {
   const COMMIT_HASH = execOrFail(
     `git rev-parse HEAD`,
     'git doesn\'t work'
-  )
+  ).trim() // because of \n
 
   const imageProductionURL = `${register_url}/production:${version}`
   const imageStagingURL = `${register_url}/staging:${version}`
@@ -141,20 +140,18 @@ const releasefront = () => {
   tryToPull(imageStagingURL)
   tryToPull(imageProductionURL)
 
-  const newDockerContent = readFile('DockerfileTmp').replace('T_BASE_IMAGE', baseImageURL)
-  const newDockerFile = tmp.fileSync()
-  fs.writeFileSync(newDockerFile.fd, newDockerContent)
+  const newDockerContent = readFile('DockerfileTmp')
+    .replace(/FROM\s+[^\s]+\s+/, `FROM ${baseImageURL}\n`)
+    .replace(/\n{2,}/g, '\n')
 
-  sh.config.verbose = true
   const tryToBuild = (imageURL, BACKEND) => {
     const args = [
       `--build-arg BACKEND=${BACKEND}`,
-      `--build-arg 'COMMIT_HASH=${COMMIT_HASH}'`, // strange quotes here
-      `--file ${newDockerFile.name}`,
+      `--build-arg COMMIT_HASH=${COMMIT_HASH}`,
       `--tag ${imageURL}`,
     ]
     execOrFail(
-      () => sh.cat(newDockerFile.name).exec(`docker build ${args.join(' ')} -`),
+      () => sh.echo(newDockerContent).exec(`docker build ${args.join(' ')} -`),
       `Image ${imageURL} build failed`
     )
   }
