@@ -4,6 +4,7 @@ const path = require('path')
 
 const sh = require('shelljs')
 const lockfile = require('@yarnpkg/lockfile')
+const tmp = require('tmp')
 
 const { argv } = require('yargs')
   .command('release <register_url>', 'build docker and push to register')
@@ -28,19 +29,20 @@ const getVersionFromPackageJSON = () => {
 }
 
 const execOrFail = (cmd, msgFail, msgOk = '', okIsNotOk = false) => {
-  let code = !(sh.exec(cmd).code)
+  let result = typeof cmd === 'string' ? sh.exec(cmd) : cmd()
+  let code = !(result.code)
   if (okIsNotOk) {
     code = !code
   }
   if (code) {
     msgOk && log(msgOk)
-  } else {
-    error(msgFail)
+    return result.stdout
   }
+  error(msgFail)
 }
 
 const execAndFailIfOk = (cmd, msgFail, msgOk) => execOrFail(cmd, msgFail, msgOk, true)
-const exec = (cmd, msg) => sh.exec(cmd).code === 0
+const exec = (cmd) => sh.exec(cmd).code === 0
 
 // CMDS section
 
@@ -66,22 +68,19 @@ const release = () => {
   log(`Image ${imageURL} successfully pushed to register`)
 }
 
-const readLockFile = () => {
+const readFile = (filename) => {
   try {
-    const lockPath = path.join(process.cwd(), 'yarn.lock')
-    const lockContent = fs.readFileSync(lockPath, 'utf8')
-    return lockfile.parse(lockContent)
+    return fs.readFileSync(path.join(process.cwd(), filename), 'utf8')
   } catch (e) {
-    error('Cannot find or parse yarn.lock file in cwd')
+    error(`Cannot find file ${filename} in cwd`)
   }
 }
 
-const readDockerFile = () => {
+const readLockFile = () => {
   try {
-    const dockerfilePath = path.join(process.cwd(), 'Dockerfile')
-    return fs.readFileSync(dockerfilePath, 'utf8')
+    return lockfile.parse(readFile('yarn.lock'))
   } catch (e) {
-    error('Cannot find Dockerfile in cwd or find FROM cmd in Dockerfile')
+    error('Cannot parse yarn.lock file')
   }
 }
 
@@ -94,9 +93,12 @@ const sha1 = (...args) => {
 }
 
 const releasefront = () => {
+  const {
+    register_url
+  } = argv
   const version = getVersionFromPackageJSON()
-  
-  const dockerFile = readDockerFile()
+
+  const dockerFile = readFile('Dockerfile')
 
   const packages = readLockFile().object
   const packagesSign = Object
@@ -105,15 +107,62 @@ const releasefront = () => {
     .join('_$_')
 
   const baseImageHash = sha1(dockerFile, packagesSign)
-  const baseImageURL = `${argv.register_url}/base/${baseImageHash}`
+  const baseImageURL = `${register_url}/base:${baseImageHash}`
   log(`Base image url is ${baseImageURL}`)
 
-  if (!exec(`docker pull ${baseImageURL}`)) {
+  const tryToPush = (imageURL) => {
     execOrFail(
-      `docker push -t ${baseImageURL}`,
-      `Cannot push ${baseImageURL}`
+      `docker push ${imageURL}`,
+      `Cannot push ${imageURL}`
     )
   }
+  if (!exec(`docker pull ${baseImageURL}`)) {
+    execOrFail(
+      `docker build -t ${baseImageURL} .`,
+      `Cannot build base image ${baseImageURL}`
+    )
+    tryToPush(baseImageURL)
+  }
+
+  const COMMIT_HASH = execOrFail(
+    `git rev-parse HEAD`,
+    'git doesn\'t work'
+  )
+
+  const imageProductionURL = `${register_url}/production:${version}`
+  const imageStagingURL = `${register_url}/staging:${version}`
+
+  const tryToPull = (imageURL) => {
+    execAndFailIfOk(
+      `docker pull ${imageURL}`,
+      `Image ${imageURL} already exist`
+    )
+  }
+  tryToPull(imageStagingURL)
+  tryToPull(imageProductionURL)
+
+  const newDockerContent = readFile('DockerfileTmp').replace('T_BASE_IMAGE', baseImageURL)
+  const newDockerFile = tmp.fileSync()
+  fs.writeFileSync(newDockerFile.fd, newDockerContent)
+
+  sh.config.verbose = true
+  const tryToBuild = (imageURL, BACKEND) => {
+    const args = [
+      `--build-arg BACKEND=${BACKEND}`,
+      `--build-arg 'COMMIT_HASH=${COMMIT_HASH}'`, // strange quotes here
+      `--file ${newDockerFile.name}`,
+      `--tag ${imageURL}`,
+    ]
+    execOrFail(
+      () => sh.cat(newDockerFile.name).exec(`docker build ${args.join(' ')} -`),
+      `Image ${imageURL} build failed`
+    )
+  }
+  tryToBuild(imageStagingURL, 'staging')
+  tryToBuild(imageProductionURL, 'production')
+
+  // tryToPush(imageStagingURL)
+  // tryToPush(imageProductionURL)
 }
 
 

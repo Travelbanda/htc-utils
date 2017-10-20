@@ -6,7 +6,8 @@
   "author": "arusakov",
   "license": "MIT",
   "files": [
-    "bin", "src"
+    "bin",
+    "src"
   ],
   "bin": {
     "htc-docker": "./bin/htc-docker"
@@ -14,6 +15,7 @@
   "dependencies": {
     "@yarnpkg/lockfile": "1.0.0",
     "shelljs": "0.7.8",
+    "tmp": "0.0.33",
     "yargs": "9.0.1"
   }
 }
