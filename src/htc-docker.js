@@ -5,26 +5,21 @@ const path = require('path')
 const sh = require('shelljs')
 const lockfile = require('@yarnpkg/lockfile')
 
-const { argv } = require('yargs')
-  .command('release <register_url>', 'build docker and push to register')
-  .command('releasefront <register_url>', 'build docker for static and push to register')
+const { argv }  = require('yargs')
+  .command('release [dontpush] <register_url>', 'build docker and push to register')
+  .command('releasefront [dontpush] <register_url>', 'build docker for static and push to register')
   .help('h')
+  .boolean('dontpush')
   .alias('h', 'help')
   .alias('v', 'version')
+
+const { dontpush, register_url } = argv
 
 const log = (s) => console.log('htc-docker OK: ' + s)
 const logerr = (s) => console.error('htc-docker ERROR: ' + s)
 const error = (s) => {
   logerr(s)
   sh.exit(1)
-}
-
-const getVersionFromPackageJSON = () => {
-  try {
-    return require(path.join(process.cwd(), 'package.json')).version
-  } catch (e) {
-    error('No package.json in cwd')
-  }
 }
 
 const execOrFail = (cmd, msgFail, msgOk = '', okIsNotOk = false) => {
@@ -39,65 +34,71 @@ const execOrFail = (cmd, msgFail, msgOk = '', okIsNotOk = false) => {
   }
   error(msgFail)
 }
-
 const execAndFailIfOk = (cmd, msgFail, msgOk) => execOrFail(cmd, msgFail, msgOk, true)
 const exec = (cmd) => sh.exec(cmd).code === 0
 
-// CMDS section
+const protectedRun = (f, msgFail) => {
+  try {
+    return f()
+  } catch (e) {
+    error(msgFail)
+  }
+}
+
+const readFile = (filename) => protectedRun(
+  () => fs.readFileSync(path.join(process.cwd(), filename), 'utf8'),
+  `Cannot find file ${filename} in cwd`
+)
+
+const getVersionFromPackageJSON = () => protectedRun(
+  () => require(path.join(process.cwd(), 'package.json')).version,
+  'No package.json in cwd'
+)
+
+const readYarnLockFile = () => protectedRun(
+  () => lockfile.parse(readFile('yarn.lock')),
+  'Cannot parse yarn.lock file'
+)
+
+const sha1 = (...args) => {
+  const h = crypto.createHash('sha1')
+  args.forEach((a) => h.update(a))
+  return h.digest('hex')
+}
+
+const tryToDockerPush = (imageURL) => execOrFail(
+  `docker push ${imageURL}`,
+  `Cannot push ${imageURL}`
+)
+const tryToDockerPull = (imageURL) => execAndFailIfOk(
+  `docker pull ${imageURL}`,
+  `Image ${imageURL} already exist`
+)
 
 const release = () => {
   const version = getVersionFromPackageJSON()
-  const imageURL = argv.register_url + ':' + version
+  const imageURL = register_url + ':' + version
   log(`Image url is ${imageURL}`)
 
-  execAndFailIfOk(
-    `docker pull ${imageURL}`,
-    `Docker image ${imageURL} already exist`,
-    'Previous "not found" is OK here',
-  )
+  tryToDockerPull(imageURL)
+  log('Previous "not found" is OK here')
+
   execOrFail(
     `docker build -t ${imageURL} .`,
     `Cannot build image ${imageURL}`
   )
-  execOrFail(
-    `docker push ${imageURL}`,
-    `Cannot push image ${imageURL}`
-  )
-
+  if (!dontpush) {
+    tryToDockerPush(imageURL)
+  }
   log(`Image ${imageURL} successfully pushed to register`)
 }
 
-const readFile = (filename) => {
-  try {
-    return fs.readFileSync(path.join(process.cwd(), filename), 'utf8')
-  } catch (e) {
-    error(`Cannot find file ${filename} in cwd`)
-  }
-}
-
-const readLockFile = () => {
-  try {
-    return lockfile.parse(readFile('yarn.lock'))
-  } catch (e) {
-    error('Cannot parse yarn.lock file')
-  }
-}
-
-const sha1 = (...args) => {
-  const h = crypto.createHash('sha1')
-  for (const a of args) {
-    h.update(a)
-  }
-  return h.digest('hex')
-}
-
 const releasefront = () => {
-  const { register_url } = argv
   const version = getVersionFromPackageJSON()
 
   const dockerFile = readFile('Dockerfile')
 
-  const packages = readLockFile().object
+  const packages = readYarnLockFile().object
   const packagesSign = Object
     .keys(packages)
     .map(k => packages[k].resolved)
@@ -107,18 +108,14 @@ const releasefront = () => {
   const baseImageURL = `${register_url}/base:${baseImageHash}`
   log(`Base image url is ${baseImageURL}`)
 
-  const tryToPush = (imageURL) => {
-    execOrFail(
-      `docker push ${imageURL}`,
-      `Cannot push ${imageURL}`
-    )
-  }
   if (!exec(`docker pull ${baseImageURL}`)) {
     execOrFail(
       `docker build -t ${baseImageURL} .`,
       `Cannot build base image ${baseImageURL}`
     )
-    tryToPush(baseImageURL)
+    if (!dontpush) {
+      tryToDockerPush(baseImageURL)
+    }
   }
 
   const COMMIT_HASH = execOrFail(
@@ -129,14 +126,9 @@ const releasefront = () => {
   const imageProductionURL = `${register_url}/production:${version}`
   const imageStagingURL = `${register_url}/staging:${version}`
 
-  const tryToPull = (imageURL) => {
-    execAndFailIfOk(
-      `docker pull ${imageURL}`,
-      `Image ${imageURL} already exist`
-    )
-  }
-  tryToPull(imageStagingURL)
-  tryToPull(imageProductionURL)
+
+  tryToDockerPull(imageStagingURL)
+  tryToDockerPull(imageProductionURL)
 
   const newDockerContent = readFile('DockerfileTmp')
     .replace(/FROM\s+[^\s]+\s+/, `FROM ${baseImageURL}\n`)
@@ -156,8 +148,10 @@ const releasefront = () => {
   tryToBuild(imageStagingURL, 'staging')
   tryToBuild(imageProductionURL, 'production')
 
-  // tryToPush(imageStagingURL)
-  // tryToPush(imageProductionURL)
+  if (!dontpush) {
+    tryToDockerPush(imageStagingURL)
+    tryToDockerPush(imageProductionURL)
+  }
 }
 
 
