@@ -152,6 +152,8 @@ const releasefront = () => {
     tryToDockerPush(imageStagingURL)
     tryToDockerPush(imageProductionURL)
   }
+
+  log('Staging and production images successfully pushed to register')
 }
 
 
