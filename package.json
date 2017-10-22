@@ -6,7 +6,8 @@
   "author": "arusakov",
   "license": "MIT",
   "files": [
-    "bin", "src"
+    "bin",
+    "src"
   ],
   "bin": {
     "htc-docker": "./bin/htc-docker"
