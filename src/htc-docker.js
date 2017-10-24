@@ -113,7 +113,9 @@ const releasefront = () => {
     `docker build -t ${baseImageURL} .`,
     `Cannot build image ${baseImageURL}`
   )
-  tryToDockerPush(baseImageURL)
+  if (!dontpush) {
+    tryToDockerPush(baseImageURL)
+  }
 
   // if (!exec(`docker pull ${baseImageURL}`)) {
   //   execOrFail(
