@@ -3,7 +3,7 @@ const fs = require('fs')
 const path = require('path')
 
 const sh = require('shelljs')
-const lockfile = require('@yarnpkg/lockfile')
+// const lockfile = require('@yarnpkg/lockfile')
 
 const { argv }  = require('yargs')
   .command('release [dontpush] <register_url>', 'build docker and push to register')
@@ -55,10 +55,10 @@ const getVersionFromPackageJSON = () => protectedRun(
   'No package.json in cwd'
 )
 
-const readYarnLockFile = () => protectedRun(
-  () => lockfile.parse(readFile('yarn.lock')),
-  'Cannot parse yarn.lock file'
-)
+// const readYarnLockFile = () => protectedRun(
+//   () => lockfile.parse(readFile('yarn.lock')),
+//   'Cannot parse yarn.lock file'
+// )
 
 const sha1 = (...args) => {
   const h = crypto.createHash('sha1')
@@ -96,27 +96,28 @@ const release = () => {
 const releasefront = () => {
   const version = getVersionFromPackageJSON()
 
-  const dockerFile = readFile('Dockerfile')
+  // const dockerFile = readFile('Dockerfile')
 
-  const packages = readYarnLockFile().object
-  const packagesSign = Object
-    .keys(packages)
-    .map(k => packages[k].resolved)
-    .join('_$_')
+  // const packages = readYarnLockFile().object
+  // const packagesSign = Object
+  //   .keys(packages)
+  //   .map(k => packages[k].resolved)
+  //   .join('_$_')
 
-  const baseImageHash = sha1(dockerFile, packagesSign)
-  const baseImageURL = `${register_url}/base:${baseImageHash}`
+  // const baseImageHash = sha1(dockerFile, packagesSign)
+  const baseImageURL = `${register_url}/base:${version}`
   log(`Base image url is ${baseImageURL}`)
+  tryToDockerPull(baseImageURL)
 
-  if (!exec(`docker pull ${baseImageURL}`)) {
-    execOrFail(
-      `docker build -t ${baseImageURL} .`,
-      `Cannot build base image ${baseImageURL}`
-    )
-    if (!dontpush) {
-      tryToDockerPush(baseImageURL)
-    }
-  }
+  // if (!exec(`docker pull ${baseImageURL}`)) {
+  //   execOrFail(
+  //     `docker build -t ${baseImageURL} .`,
+  //     `Cannot build base image ${baseImageURL}`
+  //   )
+  //   if (!dontpush) {
+  //     tryToDockerPush(baseImageURL)
+  //   }
+  // }
 
   const COMMIT_HASH = execOrFail(
     `git rev-parse HEAD`,
@@ -125,7 +126,6 @@ const releasefront = () => {
 
   const imageProductionURL = `${register_url}/production:${version}`
   const imageStagingURL = `${register_url}/staging:${version}`
-
 
   tryToDockerPull(imageStagingURL)
   tryToDockerPull(imageProductionURL)
