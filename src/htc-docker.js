@@ -107,7 +107,13 @@ const releasefront = () => {
   // const baseImageHash = sha1(dockerFile, packagesSign)
   const baseImageURL = `${register_url}/base:${version}`
   log(`Base image url is ${baseImageURL}`)
+  
   tryToDockerPull(baseImageURL)
+  execOrFail(
+    `docker build -t ${baseImageURL} .`,
+    `Cannot build image ${baseImageURL}`
+  )
+  tryToDockerPush(baseImageURL)
 
   // if (!exec(`docker pull ${baseImageURL}`)) {
   //   execOrFail(
